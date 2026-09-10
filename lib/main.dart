@@ -74,7 +74,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     setState(() => _isLoading = true);
 
     try {
-      var uri = Uri.parse('https://voice-r761.onrender.com/convert-voice/');
+      var uri = Uri.parse('https://voice-1-pew5.onrender.com/convert-voice/');
       var request = http.MultipartRequest('POST', uri)
         ..files.add(await http.MultipartFile.fromPath('audio_file', _selectedFilePath!));
 
