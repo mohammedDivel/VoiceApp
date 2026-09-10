@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 
 void main() {
@@ -37,6 +38,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   bool _isRecording = false;
   String? _selectedFilePath;
   bool _isLoading = false;
+  String? _resultFilePath;
 
   Future<void> _toggleRecording() async {
     if (_isRecording) {
@@ -44,6 +46,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       setState(() {
         _isRecording = false;
         _selectedFilePath = path;
+        _resultFilePath = null;
       });
     } else {
       if (await _audioRecorder.hasPermission()) {
@@ -61,6 +64,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (result != null) {
       setState(() {
         _selectedFilePath = result.files.single.path;
+        _resultFilePath = null;
       });
     }
   }
@@ -79,60 +83,145 @@ class _VoiceScreenState extends State<VoiceScreen> {
       if (response.statusCode == 200) {
         var responseData = await response.stream.toBytes();
 
-        File convertedFile = File('$_selectedFilePath-voicenote.ogg');
-        await convertedFile.writeAsBytes(responseData);
+        final dir = await getTemporaryDirectory();
+        final savedPath =
+            '${dir.path}/voicenote_${DateTime.now().millisecondsSinceEpoch}.ogg';
+        File resultFile = File(savedPath);
+        await resultFile.writeAsBytes(responseData);
 
-        await _audioPlayer.play(DeviceFileSource(convertedFile.path));
+        setState(() {
+          _resultFilePath = savedPath;
+        });
       } else {
-        print("خطأ من الخادم: ${response.statusCode}");
+        _showError("فشل التحويل (خطأ من الخادم: ${response.statusCode})");
       }
     } catch (e) {
-      print("حدث خطأ في الاتصال: $e");
+      _showError("حدث خطأ في الاتصال بالخادم");
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
+  Future<void> _playResult() async {
+    if (_resultFilePath != null) {
+      await _audioPlayer.play(DeviceFileSource(_resultFilePath!));
+    }
+  }
+
+  Future<void> _shareResult() async {
+    if (_resultFilePath != null) {
+      await Share.shareXFiles(
+        [XFile(_resultFilePath!)],
+        text: 'Voice Note',
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Voice Note AI')),
+      appBar: AppBar(
+        title: const Text('Voice Note AI'),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+      ),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton(
-              iconSize: 80,
-              icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
-              color: _isRecording ? Colors.red : Colors.deepPurple,
-              onPressed: _toggleRecording,
-            ),
-            const Text("اضغط للتسجيل"),
-            const SizedBox(height: 30),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.folder),
-              label: const Text("أو اختر ملف صوتي (MP3)"),
-              onPressed: _pickAudioFile,
-            ),
-            const SizedBox(height: 10),
-            if (_selectedFilePath != null)
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Text("تم اختيار ملف", style: TextStyle(color: Colors.grey[700])),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                iconSize: 90,
+                icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
+                color: _isRecording ? Colors.red : Colors.deepPurple,
+                onPressed: _toggleRecording,
               ),
-            const SizedBox(height: 30),
-            if (_selectedFilePath != null)
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+              Text(
+                _isRecording ? "جاري التسجيل..." : "اضغط للتسجيل",
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_open),
+                label: const Text("أو اختر ملف صوتي"),
+                onPressed: _pickAudioFile,
+              ),
+              if (_selectedFilePath != null) ...[
+                const SizedBox(height: 12),
+                const Icon(Icons.check_circle, color: Colors.green),
+                const Text("تم اختيار ملف"),
+              ],
+              const SizedBox(height: 32),
+              if (_selectedFilePath != null)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.auto_awesome),
+                  label: _isLoading
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text("تحويل إلى Voice Note"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  ),
+                  onPressed: _isLoading ? null : _convertVoice,
                 ),
-                onPressed: _isLoading ? null : _convertVoice,
-                child: _isLoading
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text("تحويل وإنشاء Voice Note", style: TextStyle(color: Colors.white, fontSize: 16)),
-              ),
-          ],
+              if (_resultFilePath != null) ...[
+                const SizedBox(height: 32),
+                Card(
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.graphic_eq, size: 40, color: Colors.deepPurple),
+                        const SizedBox(height: 8),
+                        const Text(
+                          "الـ Voice Note جاهز!",
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text("تشغيل"),
+                              onPressed: _playResult,
+                            ),
+                            const SizedBox(width: 12),
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.share),
+                              label: const Text("مشاركة"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: _shareResult,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
